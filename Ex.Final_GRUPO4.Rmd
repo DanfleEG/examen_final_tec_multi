@@ -423,17 +423,154 @@ Todos los valores GVIF^(1/(2·Df)) son < 2, muy por debajo del umbral de 5, indi
 
 ### **4.3. Verificación de la Linealidad en el Logit**
 * **Objetivo:** Evaluar si existe relación lineal entre las variables continuas y el logit de cada categoría.
-* **Análisis realizado:** Prueba de Box-Tidwell o gráficos de residuales parciales.
-* **Resultados a incluir:**
-  - Descripción del método empleado.
-  - Conclusión sobre el cumplimiento del supuesto o necesidad de transformaciones.
+* **Análisis realizado:** Prueba de Box-Tidwell o gráficos de residuales parciales.  
 
-### **4.4. Independencia de Alternativas Irrelevantes (IIA)**
+$H_{0}$: La relación entre el predictor continuo y el logit es lineal.  
+$H_{1}$: La relación no es lineal.
+
+
+```{r}
+variables_continuas <- c("edad_meses", "peso_nacimiento", "edad_madre",
+                         "imc_madre", "ingreso_familiar", "lactancia_materna")
+
+# Crear un dataframe para recopilar todos los resultados
+resultados_completos <- data.frame()
+
+# Para cada variable continua, hacer:
+# 1. Prueba de razón de verosimilitud con término cuadrático
+# 2. Inspección visual simplificada
+
+for(var in variables_continuas) {
+  cat("\n--- Evaluando variable:", var, "---\n")
+  
+  # Método 1: Término cuadrático (como el profesor pero más directo)
+  datos$temp_cuad <- datos[[var]]^2
+  modelo_cuad <- multinom(estado_nutricional ~ get(var) + temp_cuad, data = datos)
+  modelo_lineal <- multinom(estado_nutricional ~ get(var), data = datos)
+  
+  # Prueba de razón de verosimilitud
+  lrt <- anova(modelo_lineal, modelo_cuad)
+  p_cuadratico <- lrt$`Pr(Chi)`[2]
+  
+  # Método 2: Usar splines para detectar no linealidad
+  library(splines)
+  modelo_spline <- multinom(estado_nutricional ~ ns(get(var), df = 3), data = datos)
+  modelo_linear <- multinom(estado_nutricional ~ get(var), data = datos)
+  lrt_spline <- anova(modelo_linear, modelo_spline)
+  p_spline <- lrt_spline$`Pr(Chi)`[2]
+  
+  # Determinar conclusión
+  p_min <- min(p_cuadratico, p_spline, na.rm = TRUE)
+  lineal <- p_min > 0.05
+  
+  # Guardar resultados
+  resultados_completos <- rbind(resultados_completos,
+                                data.frame(
+                                  Variable = var,
+                                  P_cuadrático = round(p_cuadratico, 4),
+                                  P_spline = round(p_spline, 4),
+                                  Conclusión = ifelse(lineal, 
+                                                     "Linealidad aceptable", 
+                                                     "Posible no-linealidad")
+                                ))
+  
+  # Limpiar variable temporal
+  datos$temp_cuad <- NULL
+}
+```  
+
+**Método de evaluación:**
+Se siguió el enfoque metodológico propuesto por Miranda (2024), que combina pruebas estadísticas formales con análisis comparativo de modelos. Para cada una de las seis variables continuas del estudio, se implementaron dos estrategias complementarias:
+
+1. **Pruebas de razón de verosimilitud con términos cuadráticos:** Para cada predictor continuo, se comparó el modelo original con un modelo extendido que incluía un término cuadrático $(\chi^{2})$ de la misma variable mediante pruebas de razón de verosimilitud (Likelihood Ratio Test).
+
+2. **Análisis con splines cúbicos naturales:** Se ajustaron modelos alternativos utilizando splines cúbicos naturales (3 grados de libertad) para cada variable continua, comparándolos con los modelos lineales simples mediante pruebas estadísticas.
+
+Ambos métodos permiten detectar desviaciones de la linealidad evaluando si la inclusión de términos no lineales mejora significativamente el ajuste del modelo. El criterio de decisión se basó en valores-p < 0.05 como evidencia de no-linealidad significativa.
+
+```{r}
+print(resultados_completos)
+```
+
+
+**Interpretación de los resultados:**
+Todos los valores-p obtenidos superan ampliamente el umbral de significancia estadística de 0.05. En particular:
+
+- **Variables con valores-p muy altos (> 0.5):** `edad_meses` (p = 0.71), `peso_nacimiento` (p = 0.75) e `ingreso_familiar` (p = 0.66) muestran una fuerte evidencia a favor de la linealidad, con probabilidades muy bajas de que términos no lineales mejoren el modelo.
+
+- **Variables con valores-p moderados:** `edad_madre` (p = 0.23) y `imc_madre` (p = 0.18 para términos cuadráticos; p = 0.051 para splines) presentan cierta tendencia hacia valores más bajos, pero aún dentro del rango de no significancia estadística.
+
+- **Consistencia entre métodos:** Para las seis variables, ambos métodos (términos cuadráticos y splines) convergen en la misma conclusión, reforzando la validez de los resultados.
+
+El caso del `imc_madre` merece atención especial: aunque el valor-p del spline (0.0511) se aproxima al umbral de 0.05, no alcanza significancia estadística. Esta proximidad podría sugerir una leve curvatura en la relación, pero insuficiente para justificar la inclusión de términos no lineales en el modelo final.
+
+**Conclusión:**
+Con base en los resultados estadísticos presentados, **no se rechaza la hipótesis nula de linealidad** para ninguna de las variables continuas analizadas. La evidencia sugiere que las relaciones entre estos predictores y el logit del estado nutricional son aproximadamente lineales dentro del rango observado en los datos. Por lo tanto, el supuesto de linealidad en el logit se considera adecuadamente cumplido, validando la especificación funcional del modelo de regresión logística multinomial.
+
+**Limitación metodológica y consideración práctica:**
+Cabe mencionar que la evaluación de linealidad en modelos multinomiales presenta desafíos inherentes, ya que debe verificarse para cada logit individual (cada categoría vs. la referencia). Los métodos aplicados aquí ofrecen una evaluación global razonable, aunque podrían no capturar no-linealidades específicas para transiciones particulares entre categorías. No obstante, la consistencia de resultados y los valores-p obtenidos proporcionan confianza en la adecuación del supuesto de linealidad para los fines inferenciales del presente estudio.
+
+
+### **4.4. Independencia de Alternativas Irrelevantes (IIA)**  
+
 * **Objetivo:** Evaluar el supuesto fundamental del modelo logit multinomial.
-* **Análisis realizado:** Prueba de Hausman-McFadden.
-* **Resultados a incluir:**
-  - Resultado de la prueba y su interpretación.
-  - Justificación teórica si la prueba no es concluyente: "Las categorías de estado nutricional representan condiciones distintas con determinantes potencialmente diferentes, apoyando conceptualmente el supuesto de IIA".
+* **Análisis realizado:** Prueba de Hausman-McFadden.  
+
+```{r}
+# install.packages("mlogit")
+library(mlogit)
+
+# 1. Preparar datos en formato para mlogit
+datos$id <- 1:nrow(datos)  # Crear ID si no existe
+datos_mlogit <- mlogit::mlogit.data(datos, 
+                                     choice = "estado_nutricional", 
+                                     shape = "wide",
+                                     id.var = "id")
+
+# 2. Ajustar modelo completo
+modelo_completo <- mlogit::mlogit(estado_nutricional ~ 1 | edad_meses + sexo + peso_nacimiento + 
+                                   edad_madre + educacion_madre + imc_madre + ingreso_familiar + 
+                                   zona + lactancia_materna + dietas_solidos,
+                                 data = datos_mlogit)
+
+# 3. Ajustar modelo reducido (excluyendo una categoría)
+# Excluir categoría "sobrepeso"
+datos_reducidos <- datos[datos$estado_nutricional != "sobrepeso", ]
+datos_reducidos$estado_nutricional <- droplevels(datos_reducidos$estado_nutricional)
+datos_reducidos$id <- 1:nrow(datos_reducidos)
+
+datos_mlogit_reducido <- mlogit::mlogit.data(datos_reducidos,
+                                              choice = "estado_nutricional",
+                                              shape = "wide",
+                                              id.var = "id")
+
+modelo_reducido <- mlogit::mlogit(estado_nutricional ~ 1 | edad_meses + sexo + peso_nacimiento + 
+                                    edad_madre + educacion_madre + imc_madre + ingreso_familiar + 
+                                    zona + lactancia_materna + dietas_solidos,
+                                  data = datos_mlogit_reducido)
+
+# 4. Realizar prueba de Hausman-McFadden
+prueba_hausman <- mlogit::hmftest(modelo_completo, modelo_reducido)
+```
+
+**Hipótesis**  
+
+$H_{0}$: El supuesto de Independencia de Alternativas Irrelevantes se cumple  
+$H_{1}$: El supuesto de IIA no se cumple
+
+**Método:** 
+Se realizó la prueba de Hausman-McFadden comparando el modelo completo con un modelo reducido que excluye la categoría "sobrepeso". Esta prueba evalúa si la exclusión de una alternativa afecta significativamente los coeficientes estimados para las alternativas restantes.  
+
+```{r}
+print(prueba_hausman)
+```  
+
+**Interpretación:** 
+No se rechaza la hipótesis nula (p > 0.05). No hay evidencia estadística contra el supuesto de IIA.
+
+**Conclusión:**
+El supuesto de Independencia de Alternativas Irrelevantes se cumple. El modelo multinomial es apropiado para los datos.
+
 
 ## **5. Resultados del Modelo (Inferencia Estadística)**
 Aquí se presentan las estimaciones finales transformadas a valores interpretables (Odds Ratios).
