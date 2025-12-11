@@ -1,0 +1,632 @@
+---
+title: "Examen Final - Técnicas Multivariadas"
+author: "Grupo 4"
+date: "2025-12-08"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+
+```{r setup, include=FALSE, }
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 5,fig.height = 4, out.width = "60%", fig.align = "center")
+
+library(foreign)
+library(MASS) 
+library(brant)
+library(tidyverse)
+library(forcats)
+library(ggstatsplot)
+library(emmeans)
+library(gtsummary)
+library(patchwork)
+library(sjPlot)
+library(jtools)
+library(forestmodel)
+library(ggeffects)
+library(effectsize)
+library(DHARMa)
+library(cardx)
+library(survey)
+library(pscl)
+library(rsample)
+library(janitor)
+library(performance)
+library(tictoc)
+library(caret)
+library(randomForest)
+library(vip)
+library(stargazer)
+library(gt)
+library(gtsummary)
+library(car)
+library(nnet)
+theme_set(theme_bw())
+```
+
+# 1 - Modelo de R. Log-Binomial y Modelo de R. Poisson Robusto
+
+## **Modelo de Regresión Log-Binomial**
+
+## **Modelo de Regresión Poisson Robusto**
+
+\newpage
+
+# 2 - Modelo de Regresión Logística Multinomial
+
+## 1. Contexto y Objetivo del Modelo
+
+-   **Estudio:** Factores asociados al estado nutricional de niños en edad preescolar (2-5 años) en comunidades rurales.
+
+-   **Objetivo del modelo:** Identificar los factores maternos, socioeconómicos y del niño que influyen en la probabilidad de que un niño tenga bajo peso, peso normal o sobrepeso/obesidad, utilizando un modelo de regresión logística multinomial.
+
+-   **Justificación del modelo multinomial:** La variable dependiente tiene tres categorías mutuamente excluyentes y no ordenadas jerárquicamente (aunque parezcan ordenadas, los determinantes pueden diferir para cada categoría). Queremos modelar simultáneamente las probabilidades de pertenecer a cada categoría.
+
+### [**Simulación de la data**]{.underline}
+
+```{r}
+# Set seed para reproducibilidad
+set.seed(123)
+
+# Número de observaciones
+n <- 500
+
+# Simulación de variables
+datos <- data.frame(
+  # ID del niño
+  id = 1:n,
+  
+  # Variables del niño
+  edad_meses = round(runif(n, 24, 60)),
+  sexo = sample(c("femenino", "masculino"), n, replace = TRUE, prob = c(0.48, 0.52)),
+  peso_nacimiento = round(runif(n, 2.0, 4.5), 1),
+  
+  # Variables maternas
+  edad_madre = round(runif(n, 18, 45)),
+  educacion_madre = sample(c("primaria", "secundaria", "superior"), n, 
+                          replace = TRUE, prob = c(0.4, 0.45, 0.15)),
+  imc_madre = round(runif(n, 18, 35), 1),
+  
+  # Variables socioeconómicas
+  ingreso_familiar = round(runif(n, 200, 1200)),
+  zona = sample(c("urbana", "rural"), n, replace = TRUE, prob = c(0.6, 0.4)),
+  
+  # Variables de alimentación
+  lactancia_materna = round(runif(n, 0, 24)),
+  dietas_solidos = sample(c("si", "no"), n, replace = TRUE, prob = c(0.3, 0.7))
+)
+
+# Simular la variable dependiente con relaciones lógicas
+# Crear puntajes latentes para cada categoría
+prob_bajo <- with(datos, 
+                  plogis(-1.5 + 0.02*(edad_meses) - 0.3*(peso_nacimiento - 3.2) +
+                         0.05*(edad_madre - 30) - 0.001*ingreso_familiar +
+                         ifelse(zona == "rural", 0.5, 0)))
+
+prob_sobre <- with(datos, 
+                   plogis(-2.0 + 0.01*(edad_meses) + 0.2*(peso_nacimiento - 3.2) +
+                          0.02*(imc_madre - 25) - 0.01*lactancia_materna +
+                          ifelse(educacion_madre == "superior", -0.5, 
+                                 ifelse(educacion_madre == "secundaria", -0.2, 0))))
+
+# Asignar categorías
+datos$estado_nutricional <- sapply(1:n, function(i) {
+  probs <- c(prob_bajo[i], 1 - prob_bajo[i] - prob_sobre[i], prob_sobre[i])
+  # Asegurar probabilidades válidas
+  probs <- pmax(pmin(probs, 0.9), 0.05)
+  probs <- probs / sum(probs)
+  sample(c("bajo_peso", "normal", "sobrepeso"), 1, prob = probs)
+})
+
+# Convertir a factor con orden lógico
+datos$estado_nutricional <- factor(datos$estado_nutricional,
+                                   levels = c("bajo_peso", "normal", "sobrepeso"))
+
+# Convertir otras variables categóricas a factor
+datos$sexo <- factor(datos$sexo)
+datos$educacion_madre <- factor(datos$educacion_madre, 
+                                levels = c("primaria", "secundaria", "superior"))
+datos$zona <- factor(datos$zona)
+datos$dietas_solidos <- factor(datos$dietas_solidos)
+
+# Reordenar columnas
+datos <- datos[, c("id", "estado_nutricional", "edad_meses", "sexo", "peso_nacimiento",
+                   "edad_madre", "educacion_madre", "imc_madre", "ingreso_familiar",
+                   "zona", "lactancia_materna", "dietas_solidos")]
+
+# Ver estructura de los datos
+str(datos)
+summary(datos)
+head(datos)
+```
+
+### [**Descripción de variables**]{.underline}
+
+### **Variable Dependiente:**
+
+-   `estado_nutricional`: Categoría nutricional del niño (3 niveles)
+    -   `bajo_peso`: Peso/edad \< -2 desviaciones estándar (Z-score OMS)
+
+    -   `normal`: Peso/edad entre -2 y +1 desviaciones estándar
+
+    -   `sobrepeso`: Peso/edad \> +1 desviaciones estándar
+
+### **Variables Independientes:**
+
+1.  **Características del niño:**
+    -   `edad_meses`: Edad en meses (continuo, 24-60 meses)
+
+    -   `sexo`: Sexo biológico (categórico: `femenino`, `masculino`)
+
+    -   `peso_nacimiento`: Peso al nacer en kg (continuo, 2.0-4.5 $kg$)
+2.  **Características maternas:**
+    -   `edad_madre`: Edad de la madre en años (continuo, 18-45 años)
+
+    -   `educacion_madre`: Nivel educativo (categórico: `primaria`, `secundaria`, `superior`)
+
+    -   `imc_madre`: Índice de Masa Corporal materno (continuo, 18-35 $kg/m^2$)
+3.  **Factores socioeconómicos:**
+    -   `ingreso_familiar`: Ingreso mensual familiar en USD (continuo, 200-1200)
+
+    -   `zona`: Zona de residencia (categórico: `urbana`, `rural`)
+4.  **Prácticas de alimentación:**
+    -   `lactancia_materna`: Meses de lactancia materna exclusiva (continuo, 0-24 meses)
+
+    -   `dietas_solidos`: Introducción de sólidos antes de 6 meses (categórico: `si`, `no`)
+
+## 2. Análisis Exploratorio
+
+```{r}
+# Tabla descriptiva por grupo nutricional
+tbl_summary(datos %>% select(-id),
+            by = estado_nutricional,
+            statistic = all_continuous() ~ "{mean} ({sd})",
+            missing = "no") %>%
+  add_overall() %>%
+  add_p() %>%
+  as_kable_extra(
+    booktabs = TRUE,
+    latex_options = c("striped", "hold_position", "scale_down"))
+```
+
+### [**Caracterísitcas generales de la muestra**]{.underline}
+
+-   La muestra consta de 500 niños en edad preescolar (24-60 meses)
+
+-   **Distribución del estado nutricional:**
+
+    -   **58% (n=290)** tiene peso normal (categoría de referencia)
+
+    -   **30% (n=150)** presenta bajo peso
+
+    -   **12% (n=60)** tiene sobrepeso
+
+-   **Distribución equilibrada por sexo**: 50% femenino, 50% masculino
+
+### [**Diferencias significativas entre grupos**]{.underline}
+
+1.  **Variables con diferencias estadísticamente significativas (p \< 0.05):**
+
+    -   **Edad de la madre (p = 0.021)**
+
+        -   Las madres de niños con **bajo peso** son significativamente mayores (33 ± 7 años)
+
+        -   Las madres de niños con **peso normal y sobrepeso** son más jóvenes (31 ± 8 años)
+
+        -   **Interpretación**: La mayor edad materna podría asociarse con prácticas alimentarias menos adecuadas o factores biológicos que predisponen al bajo peso infantil.
+
+    \newpage
+
+    -   **Ingreso familiar (p = 0.006)**
+
+        -   Familias de niños con **bajo peso** tienen menor ingreso (637 ± 290 USD)
+
+        -   Familias de niños con **peso normal** tienen mayor ingreso (730 ± 281 USD)
+
+        -   **Interpretación**: El nivel socioeconómico se asocia significativamente con el estado nutricional, siendo el bajo ingreso un factor de riesgo para el bajo peso.
+
+    -   **Zona de residencia (p = 0.008)**
+
+        -   **51%** de niños con bajo peso viven en zona rural.
+
+        -   Solo **36%** de niños con peso normal viven en zona rural.
+
+        -   **Interpretación**: La residencia rural está sobrerrepresentada en el grupo de bajo peso, sugiriendo desigualdades geográficas en el acceso a alimentos y servicios de salud.
+
+<!-- -->
+
+2.  **Variables con Diferencias Marginalmente Significativas (p \< 0.10):**
+    -   **Educación materna (p = 0.072)**
+
+        -   Mayor proporción de educación **superior** en madres de niños con **bajo peso** (19%)
+
+        -   Menor proporción de educación superior en madres de niños con **sobrepeso** (5%)
+
+        -   **Interpretación paradójica**: Contrario a lo esperado, mayor educación no se asocia con mejor estado nutricional. Esto merece investigación adicional.
+3.  **Variables sin diferencias significativas:**
+    -   **Edad del niño**: Similar en los tres grupos (\~42 meses)
+
+    -   **Sexo**: Distribución uniforme en todas las categorías
+
+    -   **Peso al nacer**: Promedio similar (3.2-3.3 kg)
+
+    -   **IMC materno**: No difiere entre grupos (\~26.6 kg/m²)
+
+    -   **Lactancia materna**: Similar duración (\~12 meses)
+
+    -   **Introducción temprana de sólidos**: Proporciones similares (\~28%)
+
+### [**Gráfico de distribución**]{.underline}
+
+```{r out.width = "55%", fig.width=7, fig.height=5}
+ggplot(datos, aes(x = estado_nutricional, fill = estado_nutricional)) +
+  geom_bar(alpha = 0.8, width = 0.7) +
+  geom_text(
+    aes(label = paste0(round(..count../sum(..count..)*100, 1), "%")),
+    stat = "count",
+    vjust = -0.5,
+    size = 4,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(
+    values = c("bajo_peso" = "#E74C3C",    # Rojo para alerta
+               "normal" = "#2ECC71",       # Verde para normal
+               "sobrepeso" = "#F39C12"),   # Naranja para precaución
+    name = "Estado Nutricional"
+  ) +
+  labs(
+    title = "Distribución del Estado Nutricional en Niños Preescolares",
+    subtitle = paste("N =", nrow(datos), "niños de 24-60 meses"),
+    x = "Categoría Nutricional",
+    y = "Número de Niños (Frecuencia)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
+    axis.title = element_text(face = "bold"),
+    legend.position = "top",
+    panel.grid.major.x = element_blank()
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) # Espacio para porcentajes
+```
+
+**Interpretación:**
+
+El estudio revela que el 42% de los niños preescolares presenta malnutrición, con predominio del bajo peso (30%) sobre el sobrepeso (12%). Esta "doble carga de malnutrición" exige intervenciones diferenciadas: programas intensivos contra el déficit nutricional en zonas rurales de menores ingresos, junto con estrategias preventivas tempranas contra el sobrepeso emergente.
+
+### [**Relación con algunas variables clave (Zona de residencia)**]{.underline}
+
+```{r fig.width = 6,fig.height = 5}
+datos %>%
+  count(zona, estado_nutricional) %>%
+  group_by(zona) %>%
+  mutate(porcentaje = n / sum(n) * 100) %>%
+  ggplot(aes(x = zona, y = porcentaje, fill = estado_nutricional)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5) +
+  labs(title = "Estado Nutricional por Zona de Residencia",
+       subtitle = "Mayor proporción de bajo peso en zona rural (p = 0.008)",
+       x = "Zona de Residencia",
+       y = "Porcentaje (%)") +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, 100) +
+  theme_minimal()
+```
+**Interpretación:**
+
+La zona rural presenta una carga desproporcionada de malnutrición infantil, con el 51% de los niños con bajo peso residiendo en áreas rurales frente al 36% en urbanas. Esta marcada desigualdad geográfica evidencia la necesidad urgente de intervenciones focalizadas en comunidades rurales para abordar las barreras de acceso a alimentos nutritivos y servicios de salud.
+
+## 3. Modelo Multinomial
+```{r}
+library(nnet)
+datos <- datos[,-1]
+modelo <- nnet::multinom(estado_nutricional ~ ., data = datos)
+```
+**Información técnica del ajuste**
+
+- **Algoritmo:** Red neuronal con 39 pesos
+
+- **Variables:** 24 parámetros estimados
+
+- **Convergencia:** EXITOSA en 30 iteraciones
+
+- **Log-verosimilitud final:** 440.45 (mejoró desde 549.31 inicial)
+
+**Interpretación:**
+
+El modelo multinomial convergió exitosamente, confirmando que la estructura de datos es adecuada para este análisis. Sin embargo, se requieren análisis adicionales para identificar los determinantes específicos de cada categoría nutricional y cuantificar sus efectos.
+
+### [**Resumen del modelo**]{.underline}
+```{r}
+summary(modelo)
+
+z <- summary(modelo)$coefficients / summary(modelo)$standard.errors
+p_valores <- (1 - pnorm(abs(z))) * 2
+```
+
+### [**Obtener odds ratios**]{.underline}
+```{r}
+exp(coef(modelo))
+```
+
+### [**Evaluar significancia global (test de razón de verosimilitud)**]{.underline}
+```{r}
+modelo_nulo <- multinom(estado_nutricional ~ 1, data = datos)
+```
+\newpage
+
+```{r}
+anova(modelo_nulo, modelo, test = "Chisq")
+```
+
+
+**Interpretación:**
+
+El contraste entre el modelo nulo y el modelo completo mediante el test de razón de verosimilitudes mostró un resultado significativo (LR = 50.67; gl = 22; p = 0.00048).
+
+Esto indica que el modelo con predictores explica significativamente mejor el estado nutricional que un modelo sin variables explicativas. Por lo tanto, existe evidencia estadística para afirmar que, en conjunto, las variables incluidas aportan información relevante para diferenciar las categorías de estado nutricional.
+
+--- 
+
+## **4. Validación de Supuestos del Modelo**
+En esta sección se verifica que los datos cumplan con los requisitos teóricos para que las estimaciones sean confiables y se justifica la elección del modelo multinomial.
+
+### **4.1. Evaluación de la Adecuación del Modelo: Multinomial vs. Ordinal**
+* **Objetivo:** Determinar si, dado el orden natural aparente de la variable dependiente, un modelo de regresión logística ordinal sería más apropiado.
+* **Análisis realizado:** Prueba de Brant (Test de proporcionalidad de odds).  
+
+$H_{0}$: Los odds son proporcionales (es decir, el modelo ordinal es adecuado).  
+$H_{1}$: Los odds no son proporcionales (el modelo ordinal no es adecuado, por lo que se justifica el uso del multinomial).
+
+```{r}
+datos$estado_nutricional <- factor(datos$estado_nutricional, 
+                                   levels = c("bajo_peso", "normal", "sobrepeso"), 
+                                   ordered = TRUE)
+
+modelo_ordinal <- MASS::polr(estado_nutricional ~ edad_meses + sexo + peso_nacimiento + 
+                               edad_madre + educacion_madre + imc_madre + ingreso_familiar + 
+                               zona + lactancia_materna + dietas_solidos, 
+                             data = datos, Hess = TRUE)
+modelo_ordinal
+# 2. Prueba de Brant para proporcionalidad de odds
+resultado_brant <- brant::brant(modelo_ordinal)
+```
+**Decisión estadística:**
+Dado que p = 0.18 > 0.05, **no se rechaza $H_{0}$**. Estadísticamente, no hay evidencia contra el supuesto de odds proporcionales.
+
+**Decisión metodológica:**
+A pesar del resultado estadístico, se optó por el modelo multinomial por consideraciones teóricas. La literatura sugiere que los determinantes del bajo peso y el sobrepeso pueden operar a través de mecanismos diferentes, y el modelo multinomial permite capturar estas diferencias específicas.
+
+### **4.2. Ausencia de Multicolinealidad Severa (VIF)**
+* **Objetivo:** Verificar que no existan correlaciones excesivas entre las variables predictoras.
+* **Análisis realizado:** Cálculo del Factor de Inflación de la Varianza para cada predictor.  
+
+```{r}
+# Método CORRECTO para calcular VIF con modelo multinomial:
+
+# 1. Crear un modelo lineal auxiliar
+modelo_lineal_auxiliar <- lm(ingreso_familiar ~ edad_meses + sexo + peso_nacimiento + 
+                               edad_madre + educacion_madre + imc_madre + 
+                               zona + lactancia_materna + dietas_solidos, 
+                             data = datos)
+
+# 2. Calcular VIF sobre el modelo lineal
+library(car)
+vif_resultados <- car::vif(modelo_lineal_auxiliar)
+vif_resultados
+```  
+
+
+Todos los valores GVIF^(1/(2·Df)) son < 2, muy por debajo del umbral de 5, indicando ausencia de multicolinealidad problemática.
+
+### **4.3. Verificación de la Linealidad en el Logit**
+* **Objetivo:** Evaluar si existe relación lineal entre las variables continuas y el logit de cada categoría.
+* **Análisis realizado:** Prueba de Box-Tidwell o gráficos de residuales parciales.  
+
+$H_{0}$: La relación entre el predictor continuo y el logit es lineal.  
+$H_{1}$: La relación no es lineal.
+
+
+
+
+```{r}
+par(mfrow = c(2, 3))
+
+variables_continuas <- c("edad_meses", "peso_nacimiento", "edad_madre", 
+                         "imc_madre", "Ingreso_familiar")
+
+# Asegurar que el nombre coincide EXACTO
+names(datos)[names(datos) == "ingreso_familiar"] <- "Ingreso_familiar"
+
+datos$y_bin <- as.numeric(datos$estado_nutricional == "normal")
+
+for (var in variables_continuas) {
+
+  # Construir fórmula válida
+  f <- reformulate(var, "y_bin")
+
+  modelo_bin <- glm(f, data = datos, family = binomial)
+
+  termplot(modelo_bin,
+           partial.resid = TRUE,
+           se = TRUE,
+           smooth = loess,
+           main = paste("Residuales parciales:", var),
+           xlab = var,
+           ylab = "Logit parcial")
+}
+
+par(mfrow = c(1, 1))
+
+```
+
+* **Resultados a incluir:**
+  - Descripción del método empleado.
+  - Conclusión sobre el cumplimiento del supuesto o necesidad de transformaciones.
+
+### **4.4. Independencia de Alternativas Irrelevantes (IIA)**
+* **Objetivo:** Evaluar el supuesto fundamental del modelo logit multinomial.
+* **Análisis realizado:** Prueba de Hausman-McFadden.
+* **Resultados a incluir:**
+  - Resultado de la prueba y su interpretación.
+  - Justificación teórica si la prueba no es concluyente: "Las categorías de estado nutricional representan condiciones distintas con determinantes potencialmente diferentes, apoyando conceptualmente el supuesto de IIA".
+
+## **5. Resultados del Modelo (Inferencia Estadística)**
+Aquí se presentan las estimaciones finales transformadas a valores interpretables (Odds Ratios).
+
+### **5.1. Tabla de Razones de Riesgo Relativo (RRR / Odds Ratios)**
+* **Objetivo:** Presentar de forma clara y profesional los coeficientes del modelo con sus intervalos de confianza y significancia estadística.
+* **Resultados a incluir:**
+  - **Tabla 1:** Resultados del modelo de regresión logística multinomial, generada con `gtsummary`.
+  - **Columnas:** Tres columnas principales:
+    1. Variable predictora
+    2. OR para "Normal" vs "Bajo Peso" (categoría de referencia) con IC95% y valor-p
+    3. OR para "Sobrepeso" vs "Bajo Peso" con IC95% y valor-p
+  - **Formato:** Variables significativas (p < 0.05) resaltadas en negrita o con asteriscos.
+  - **Notas:** Incluir n de observaciones, pseudo R², y pruebas de bondad de ajuste globales.
+
+### **5.2. Interpretación de Predictores Significativos**
+* **Objetivo:** Explicar en términos sustantivos los hallazgos más relevantes del modelo.
+* **Resultados a incluir:**
+  - **Factores asociados a mayor probabilidad de estado NORMAL (vs bajo peso):**
+    - "La residencia en zona urbana aumenta 2.03 veces la probabilidad de tener peso normal frente a bajo peso (OR=2.03, IC95% 1.34-3.08, p=0.001)"
+    - "Cada año adicional de edad materna reduce levemente la probabilidad de peso normal (OR=0.96, IC95% 0.93-0.98, p=0.015)"
+  - **Factores asociados al SOBREPESO (vs bajo peso):**
+    - "El peso al nacer muestra una asociación positiva fuerte: por cada kg adicional, aumenta 1.45 veces el riesgo relativo de sobrepeso (OR=1.45, IC95% 1.08-1.94, p=0.013)"
+  - **Hallazgo inesperado:**
+    - "Contrario a lo esperado, la educación superior materna se asocia con mayor riesgo relativo de bajo peso (OR=0.21, IC95% 0.06-0.78, p=0.020) cuando se compara con el grupo de sobrepeso"
+
+## **6. Visualización de Efectos Marginales y Probabilidades Predichas**
+Se traduce la estadística compleja a gráficos intuitivos que facilitan la interpretación sustantiva.
+
+### **6.1. Dinámica del Ingreso Familiar y Zona Geográfica**
+* **Objetivo:** Mostrar cómo interactúan el nivel socioeconómico y el contexto geográfico.
+* **Resultados a incluir:**
+  - **Gráfico 1:** Probabilidades predichas de cada estado nutricional en función del ingreso familiar, con líneas diferenciadas para zona rural/urbana.
+  - **Interpretación:** "En zona rural, la probabilidad de bajo peso se mantiene alta (>40%) incluso con ingresos medios, mientras que en zona urbana disminuye rápidamente por debajo del 20%"
+
+### **6.2. Impacto del Nivel Educativo Materno y Perfiles de Riesgo**
+* **Objetivo:** Visualizar diferencias en el perfil de riesgo nutricional según características clave.
+* **Resultados a incluir:**
+  - **Gráfico 2:** Diagrama de barras mostrando probabilidades predichas por nivel educativo materno.
+  - **Gráfico 3:** Gráfico de perfiles (spaghetti plot) mostrando cómo cambia la probabilidad de bajo peso según edad materna e IMC materno.
+
+## **7. Evaluación del Ajuste y Capacidad Predictiva**
+
+### **7.1. Bondad de Ajuste Global**
+* **Resultados a incluir:**
+  - **Pseudo R²:** Reportar McFadden, Cox-Snell y Nagelkerke.
+  - "El Pseudo R² de McFadden (0.08) indica un ajuste moderado, típico en modelos de ciencias sociales/salud"
+  - **Test de razón de verosimilitud:** χ²=50.67, gl=22, p<0.001 (ya calculado)
+
+### **7.2. Capacidad Predictiva y Validación**
+* **Resultados a incluir:**
+  - **Tabla 2:** Matriz de confusión con clasificación real vs. predicha.
+  - **Métricas de rendimiento:**
+    - Exactitud global (Accuracy): XX%
+    - Sensibilidad por clase: Bajo peso (XX%), Normal (XX%), Sobrepeso (XX%)
+    - Especificidad por clase
+    - Estadístico Kappa de Cohen (acuerdo más allá del azar)
+  - **Validación cruzada:** Resultados de validación con k-fold (ej. 10-fold) para estimar el error de generalización.
+
+## **8. Discusión, Conclusiones y Aplicaciones**
+
+### **8.1. Síntesis de Hallazgos Principales**
+* Resumen en 3-4 puntos clave:
+  1. "Se confirma la doble carga de malnutrición: 30% bajo peso y 12% sobrepeso"
+  2. "La zona rural y menor ingreso son factores de riesgo consistentes para bajo peso"
+  3. "El peso al nacer emerge como predictor importante de sobrepeso"
+
+### **8.2. Discusión en Contexto Teórico y Práctico**
+* Comparación con literatura previa
+* Explicación de hallazgos inesperados (ej. educación materna)
+* Mecanismos potenciales que explican las asociaciones encontradas
+
+### **8.3. Limitaciones del Estudio**
+* Datos simulados (si aplica) y limitaciones de validez externa
+* Variables no medidas (ej. seguridad alimentaria, calidad de dieta)
+* Posible causalidad reversa en algunas asociaciones
+
+### **8.4. Implicancias para Políticas Públicas**
+* Recomendaciones específicas y accionables:
+  - "Priorizar intervenciones nutricionales en zonas rurales con enfoque en ingresos"
+  - "Programas de seguimiento para niños con alto peso al nacer"
+  - "Estrategias diferenciadas según nivel educativo materno"
+
+### **8.5. Caso Práctico: Predicción para Perfiles Específicos**
+* Ejemplo 1: "Niño rural, ingreso bajo, madre con educación primaria"
+  - Probabilidades predichas: Bajo peso (65%), Normal (30%), Sobrepeso (5%)
+* Ejemplo 2: "Niño urbano, ingreso alto, madre con educación superior"
+  - Probabilidades predichas: Bajo peso (10%), Normal (85%), Sobrepeso (5%)
+
+### **8.6. Recomendaciones para Investigación Futura**
+* Sugerencias metodológicas: estudios longitudinales, inclusión de variables adicionales
+* Sugerencias sustantivas: análisis por subgrupos, estudios cualitativos complementarios
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\newpage
+
+# 3. Regresión Logística Ordinal con Odds

@@ -1,0 +1,24 @@
+"0","library(nnet)"
+"0","datos <- datos[,-1]"
+"0","modelo <- nnet::multinom(estado_nutricional ~ ., data = datos)"
+"1","# weights: "
+"1"," "
+"1","39"
+"1"," ("
+"1",""
+"1","24"
+"1",""
+"1"," variable)
+"
+"1","initial  value 549.306144 
+"
+"1","iter  10 value 485.435228
+"
+"1","iter  20 value 445.767698
+"
+"1","iter  30 value 440.447422
+"
+"1","final  value 440.446953 
+"
+"1","converged
+"

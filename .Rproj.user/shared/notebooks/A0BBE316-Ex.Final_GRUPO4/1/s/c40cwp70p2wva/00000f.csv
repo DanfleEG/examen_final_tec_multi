@@ -1,0 +1,16 @@
+"0","modelo_nulo <- multinom(estado_nutricional ~ 1, data = datos)"
+"1","# weights: "
+"1"," "
+"1","6"
+"1"," ("
+"1",""
+"1","2"
+"1",""
+"1"," variable)
+"
+"1","initial  value 549.306144 
+"
+"1","final  value 465.782614 
+"
+"1","converged
+"
