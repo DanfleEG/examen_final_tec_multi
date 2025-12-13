@@ -576,26 +576,110 @@ El supuesto de Independencia de Alternativas Irrelevantes se cumple. El modelo m
 Aquí se presentan las estimaciones finales transformadas a valores interpretables (Odds Ratios).
 
 ### **5.1. Tabla de Razones de Riesgo Relativo (RRR / Odds Ratios)**
-* **Objetivo:** Presentar de forma clara y profesional los coeficientes del modelo con sus intervalos de confianza y significancia estadística.
-* **Resultados a incluir:**
-  - **Tabla 1:** Resultados del modelo de regresión logística multinomial, generada con `gtsummary`.
-  - **Columnas:** Tres columnas principales:
-    1. Variable predictora
-    2. OR para "Normal" vs "Bajo Peso" (categoría de referencia) con IC95% y valor-p
-    3. OR para "Sobrepeso" vs "Bajo Peso" con IC95% y valor-p
+* **Objetivo:** Presentar de forma clara y profesional los coeficientes del modelo con sus intervalos de confianza y significancia estadística.  
+
+- **Tabla 1:** Resultados del modelo de regresión logística multinomial
+
+```{r}
+library(nnet)
+modelo_multinom <- multinom(estado_nutricional ~ ., data = datos)
+```  
+
+**Tabla 1. Resultados del modelo de regresión logística multinomial**
+
+```{r}
+# 2. Extraer coeficientes y errores estándar
+coeficientes <- summary(modelo_multinom)$coefficients
+errores_std <- summary(modelo_multinom)$standard.errors
+
+# 3. Calcular valores z y p
+z_values <- coeficientes / errores_std
+p_values <- 2 * (1 - pnorm(abs(z_values)))
+
+# 4. Crear un data frame con los resultados
+# Para la categoría "normal" vs referencia
+resultados_normal <- data.frame(
+  Predictor = colnames(coeficientes),
+  OR = exp(coeficientes["normal", ]),
+  LI = exp(coeficientes["normal", ] - 1.96 * errores_std["normal", ]),
+  LS = exp(coeficientes["normal", ] + 1.96 * errores_std["normal", ]),
+  Valor_p = p_values["normal", ],
+  Categoria = "Normal vs Bajo_peso"
+)
+
+# Para la categoría "sobrepeso" vs referencia
+resultados_sobrepeso <- data.frame(
+  Predictor = colnames(coeficientes),
+  OR = exp(coeficientes["sobrepeso", ]),
+  LI = exp(coeficientes["sobrepeso", ] - 1.96 * errores_std["sobrepeso", ]),
+  LS = exp(coeficientes["sobrepeso", ] + 1.96 * errores_std["sobrepeso", ]),
+  Valor_p = p_values["sobrepeso", ],
+  Categoria = "Sobrepeso vs Bajo_peso"
+)
+
+# Combinar ambos data frames
+resultados_completos <- rbind(resultados_normal, resultados_sobrepeso)
+
+# 5. Crear una tabla bonita con gtsummary
+# Primero, necesitamos formatear los resultados para gtsummary
+# Crear un data frame en formato "largo" para gtsummary
+resultados_largo <- resultados_completos %>%
+  mutate(
+    OR_IC = sprintf("%.3f (%.3f-%.3f)", OR, LI, LS),
+    Significancia = ifelse(Valor_p < 0.05, "Sí", "No")
+  ) %>%
+  select(Categoria, Predictor, OR_IC, Valor_p, Significancia)
+
+# Mostrar tabla
+print(resultados_largo)
+
+# Si prefieres una tabla más formal con gtsummary, podemos crear un modelo ficticio
+# pero mejor usemos directamente la tabla que creamos
+
+# 6. Mostrar medidas de ajuste global
+cat("\n=== MEDIDAS DE AJUSTE GLOBAL ===\n")
+cat("Devianza nula:", modelo_multinom$null.deviance, "\n")
+cat("Devianza residual:", modelo_multinom$deviance, "\n")
+cat("AIC:", AIC(modelo_multinom), "\n")
+cat("Número de observaciones:", nrow(datos), "\n")
+
+# 7. Prueba de razón de verosimilitud global (modelo vs nulo)
+modelo_nulo <- multinom(estado_nutricional ~ 1, data = datos)
+prueba_razon_verosimilitud <- anova(modelo_nulo, modelo_multinom)
+cat("\n=== PRUEBA DE RAZÓN DE VEROSIMILITUD (Modelo vs Nulo) ===\n")
+print(prueba_razon_verosimilitud)
+```
+
   - **Formato:** Variables significativas (p < 0.05) resaltadas en negrita o con asteriscos.
   - **Notas:** Incluir n de observaciones, pseudo R², y pruebas de bondad de ajuste globales.
 
 ### **5.2. Interpretación de Predictores Significativos**
-* **Objetivo:** Explicar en términos sustantivos los hallazgos más relevantes del modelo.
-* **Resultados a incluir:**
-  - **Factores asociados a mayor probabilidad de estado NORMAL (vs bajo peso):**
-    - "La residencia en zona urbana aumenta 2.03 veces la probabilidad de tener peso normal frente a bajo peso (OR=2.03, IC95% 1.34-3.08, p=0.001)"
-    - "Cada año adicional de edad materna reduce levemente la probabilidad de peso normal (OR=0.96, IC95% 0.93-0.98, p=0.015)"
-  - **Factores asociados al SOBREPESO (vs bajo peso):**
-    - "El peso al nacer muestra una asociación positiva fuerte: por cada kg adicional, aumenta 1.45 veces el riesgo relativo de sobrepeso (OR=1.45, IC95% 1.08-1.94, p=0.013)"
-  - **Hallazgo inesperado:**
-    - "Contrario a lo esperado, la educación superior materna se asocia con mayor riesgo relativo de bajo peso (OR=0.21, IC95% 0.06-0.78, p=0.020) cuando se compara con el grupo de sobrepeso"
+
+**Factores asociados al estado NORMAL (vs. bajo peso):**
+
+1. **Edad de la madre** (OR = 0.957, IC95%: 0.932-0.983, p = 0.0013): Por cada año adicional en la edad de la madre, la probabilidad de que el niño tenga peso normal (en comparación con bajo peso) disminuye en un 4.3%. Este efecto es estadísticamente significativo.
+
+2. **Ingreso familiar** (OR = 1.001, IC95%: 1.001-1.002, p = 0.0004): Por cada dólar adicional de ingreso mensual familiar, la probabilidad de peso normal (vs. bajo peso) aumenta en un 0.1%. Aunque el efecto por unidad es pequeño, tiene importancia acumulativa: por ejemplo, una diferencia de $100 en el ingreso familiar se asocia con un aumento del 10% en la probabilidad de peso normal.
+
+3. **Zona de residencia urbana** (OR = 2.031, IC95%: 1.336-3.088, p = 0.0009): Los niños que residen en zonas urbanas tienen aproximadamente el doble de probabilidad (103% más) de presentar peso normal en comparación con bajo peso, controlando por las demás variables.
+
+**Factores asociados al sobrepeso (vs. bajo peso):**
+
+1. **Edad de la madre** (OR = 0.954, IC95%: 0.918-0.992, p = 0.0171): Por cada año adicional de la madre, la probabilidad de que el niño tenga sobrepeso (en comparación con bajo peso) disminuye en un 4.6%.
+
+2. **Educación superior materna** (OR = 0.213, IC95%: 0.058-0.779, p = 0.0195): Los niños cuyas madres tienen educación superior presentan un 78.7% menos de probabilidad de sobrepeso en comparación con bajo peso. Este es el efecto protector más fuerte identificado en el modelo.
+
+**Variables no significativas:**
+El sexo del niño, peso al nacer, IMC materno, meses de lactancia materna e introducción temprana de sólidos no mostraron asociaciones estadísticamente significativas con el estado nutricional en este modelo.
+
+**Significancia global del modelo:**
+La prueba de razón de verosimilitud comparando el modelo completo con el modelo nulo (sin predictores) fue altamente significativa (LR = 55.67, gl = 24, p < 0.001), indicando que el conjunto de variables predictoras contribuye significativamente a explicar el estado nutricional infantil.
+
+**Medidas de ajuste global:**
+- Devianza residual: 875.89
+- AIC: 927.89
+- Número de observaciones: 500
+
 
 ## **6. Visualización de Efectos Marginales y Probabilidades Predichas**
 Se traduce la estadística compleja a gráficos intuitivos que facilitan la interpretación sustantiva.
@@ -603,14 +687,242 @@ Se traduce la estadística compleja a gráficos intuitivos que facilitan la inte
 ### **6.1. Dinámica del Ingreso Familiar y Zona Geográfica**
 * **Objetivo:** Mostrar cómo interactúan el nivel socioeconómico y el contexto geográfico.
 * **Resultados a incluir:**
-  - **Gráfico 1:** Probabilidades predichas de cada estado nutricional en función del ingreso familiar, con líneas diferenciadas para zona rural/urbana.
-  - **Interpretación:** "En zona rural, la probabilidad de bajo peso se mantiene alta (>40%) incluso con ingresos medios, mientras que en zona urbana disminuye rápidamente por debajo del 20%"
+  - **Gráfico 1:** Probabilidades predichas de cada estado nutricional en función del ingreso familiar, con líneas diferenciadas para zona rural/urbana.  
+  
+```{r include=FALSE}
+# --- CORRECCIÓN: Modelo sin la variable id ---
+library(nnet)
+library(ggeffects)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# 1. Ajustar modelo SIN la variable id (que es solo identificador)
+modelo_corregido <- multinom(estado_nutricional ~ edad_meses + sexo + peso_nacimiento + 
+                                edad_madre + educacion_madre + imc_madre + 
+                                ingreso_familiar + zona + lactancia_materna + 
+                                dietas_solidos, 
+                              data = datos)
+
+# Verificar convergencia
+summary(modelo_corregido)
+
+# 2. Crear datos para predicción (sin id)
+datos_prediccion <- expand.grid(
+  ingreso_familiar = seq(200, 1200, length.out = 100),
+  zona = factor(c("rural", "urbana"), levels = levels(datos$zona)),
+  edad_meses = mean(datos$edad_meses),
+  sexo = factor("masculino", levels = levels(datos$sexo)),
+  peso_nacimiento = mean(datos$peso_nacimiento),
+  edad_madre = mean(datos$edad_madre),
+  educacion_madre = factor("secundaria", levels = levels(datos$educacion_madre)),
+  imc_madre = mean(datos$imc_madre),
+  lactancia_materna = mean(datos$lactancia_materna),
+  dietas_solidos = factor("no", levels = levels(datos$dietas_solidos))
+)
+
+# 3. Predecir probabilidades con el modelo corregido
+prob_predichas <- predict(modelo_corregido, 
+                         newdata = datos_prediccion, 
+                         type = "probs")
+
+# 4. Combinar resultados
+resultados_pred <- cbind(datos_prediccion, prob_predichas)
+
+# 5. Convertir a formato largo para ggplot
+resultados_largo <- resultados_pred %>%
+  pivot_longer(
+    cols = c(bajo_peso, normal, sobrepeso),
+    names_to = "estado_nutricional",
+    values_to = "probabilidad"
+  )
+```  
+
+
+```{r include=FALSE}
+# 6. Crear gráfico corregido
+grafico_corregido <- ggplot(resultados_largo, 
+                           aes(x = ingreso_familiar, y = probabilidad,
+                               color = estado_nutricional, linetype = zona)) +
+  geom_line(linewidth = 1.2) +
+  facet_wrap(~estado_nutricional, ncol = 3, 
+             labeller = as_labeller(c("bajo_peso" = "Bajo Peso",
+                                      "normal" = "Normal",
+                                      "sobrepeso" = "Sobrepeso"))) +
+  labs(
+    title = "Efecto del ingreso familiar sobre el estado nutricional infantil",
+    subtitle = "Probabilidades predichas por zona de residencia",
+    x = "Ingreso familiar mensual (USD)",
+    y = "Probabilidad predicha",
+    color = "Estado nutricional:",
+    linetype = "Zona de residencia:"
+  ) +
+  scale_x_continuous(labels = scales::dollar_format(prefix = "$"),
+                     breaks = seq(200, 1200, by = 200)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     limits = c(0, 1),
+                     breaks = seq(0, 1, by = 0.10)) +
+  scale_color_manual(
+    values = c("bajo_peso" = "#E41A1C",  # Rojo
+               "normal" = "#377EB8",     # Azul
+               "sobrepeso" = "#4DAF4A"), # Verde
+    labels = c("Bajo Peso", "Normal", "Sobrepeso")
+  ) +
+  scale_linetype_manual(
+    values = c("rural" = "11", "urbana" = "solid"),
+    labels = c("Rural", "Urbana")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray40"),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.5),
+    panel.background = element_rect(fill = "white", color = NA)
+  ) +
+  guides(
+    color = guide_legend(nrow = 1, title.position = "top"),
+    linetype = guide_legend(nrow = 1, title.position = "top")
+  )
+
+# 7. Mostrar gráfico
+print(grafico_corregido)
+
+# 8. Guardar gráfico
+ggsave("grafico_ingreso_zona_corregido.png", 
+       plot = grafico_corregido, 
+       width = 14, height = 6, dpi = 300, bg = "white")
+```
+
+![](grafico_ingreso_zona_corregido.png)
+
+**Hallazgos principales:**  
+  
+**1. Bajo peso**
+
+* En **zona rural**, Comienza con una probabilidad crítica de casi el 45% en los niveles de ingreso más bajos (200 soles). Aunque desciende con el ingreso, al llegar a los 1,200 soles todavía se mantiene cerca del 18-20%, una cifra que sigue siendo preocupante.  
+
+* En **zona urbana**, Inicia significativamente más abajo (~28%) y desciende de forma más eficiente hasta alcanzar apenas un 10% en el nivel de ingreso más alto.  
+
+* Brecha: Existe una "penalización rural" constante; un niño rural necesita ganar casi 1,000 soles para tener el mismo riesgo de bajo peso que un niño urbano que solo gana 400 soles.
+
+**2. Peso normal**
+
+* En **urbana** Es el estado predominante en la ciudad desde el inicio (~58%) y muestra un crecimiento robusto hasta alcanzar el 75% de probabilidad.  
+
+* En **rural**, Comienza por debajo de la mitad (~43%). Aunque mejora con el ingreso, su techo máximo (~65%) ni siquiera alcanza el punto de partida de la zona urbana. El ingreso ayuda, pero no compensa totalmente las carencias del entorno rural.
+
+**3. Sobrepeso**
+
+* En **urbana**, Se mantiene notablemente estable y plana, casi inmóvil cerca del 14-15% a lo largo de todo el espectro de ingresos.  
+* En **rural**, Presenta una tendencia ascendente más marcada que la urbana. Inicia en el mismo punto (~14%), pero en los niveles de ingreso altos ($1,200) supera a la zona urbana, llegando casi al 18%.
+
+
+### **Interpretación**
+
+* El ingreso protege más del bajo peso en **zonas urbanas**, mientras que en **rurales** persisten barreras estructurales (servicios de salud, disponibilidad alimentaria, distancia).
+* El leve aumento del sobrepeso en urbana sugiere **transición nutricional** asociada a mayores recursos.
+* Se identifica un **umbral protector en $600–800**, por debajo del cual el riesgo de bajo peso sigue alto, sobre todo en rural.
+* Se requieren **intervenciones diferenciadas**: combatir déficit nutricional en rural y prevenir sobrepeso en urbana.
+
+### **Limitación**
+
+* Las predicciones mantienen constantes otras variables (promedio/moda). En la práctica, podrían covariar con ingreso y zona y alterar los patrones.
 
 ### **6.2. Impacto del Nivel Educativo Materno y Perfiles de Riesgo**
 * **Objetivo:** Visualizar diferencias en el perfil de riesgo nutricional según características clave.
-* **Resultados a incluir:**
-  - **Gráfico 2:** Diagrama de barras mostrando probabilidades predichas por nivel educativo materno.
-  - **Gráfico 3:** Gráfico de perfiles (spaghetti plot) mostrando cómo cambia la probabilidad de bajo peso según edad materna e IMC materno.
+* **Resultados a incluir:**  
+
+```{r}
+#    Vamos a usar los valores promedios para las variables continuas y la moda para las categóricas (excepto educación_madre)
+pred_educ <- expand.grid(
+  educacion_madre = levels(datos$educacion_madre),  # Los tres niveles
+  # Valores promedios o modas para el resto
+  edad_meses = mean(datos$edad_meses),
+  sexo = factor("masculino", levels = levels(datos$sexo)),
+  peso_nacimiento = mean(datos$peso_nacimiento),
+  edad_madre = mean(datos$edad_madre),
+  imc_madre = mean(datos$imc_madre),
+  ingreso_familiar = mean(datos$ingreso_familiar),
+  zona = factor("urbana", levels = levels(datos$zona)),
+  lactancia_materna = mean(datos$lactancia_materna),
+  dietas_solidos = factor("no", levels = levels(datos$dietas_solidos))
+)  
+
+
+
+# 2. Predecir probabilidades
+probs_educ <- predict(modelo_corregido, newdata = pred_educ, type = "probs")
+pred_educ <- cbind(pred_educ, probs_educ)
+
+# 3. Convertir a formato largo
+library(tidyr)
+pred_educ_largo <- pivot_longer(pred_educ, 
+                                cols = c(bajo_peso, normal, sobrepeso), 
+                                names_to = "estado_nutricional", 
+                                values_to = "probabilidad")
+
+# --- VERSIÓN SIMPLE (calculando diferencias) ---
+cat("\n=== PROBABILIDADES PREDICHAS POR EDUCACIÓN MATERNA ===\n")
+
+# Calcular probabilidades para cada nivel educativo
+niveles <- levels(datos$educacion_madre)
+for(nivel in niveles) {
+  pred_temp <- pred_educ[pred_educ$educacion_madre == nivel, ]
+  cat(sprintf("\nEducación materna: %s\n", nivel))
+  cat(sprintf("  Bajo peso: %.1f%%\n", pred_temp$bajo_peso * 100))
+  cat(sprintf("  Normal: %.1f%%\n", pred_temp$normal * 100))
+  cat(sprintf("  Sobrepeso: %.1f%%\n", pred_temp$sobrepeso * 100))
+}
+
+# Calcular diferencias
+cat("\n=== DIFERENCIAS RELATIVAS ===\n")
+cat("Comparando con educación primaria (referencia):\n")
+
+primaria <- pred_educ[pred_educ$educacion_madre == "primaria", ]
+secundaria <- pred_educ[pred_educ$educacion_madre == "secundaria", ]
+superior <- pred_educ[pred_educ$educacion_madre == "superior", ]
+
+cat("\nSecundaria vs Primaria:\n")
+cat(sprintf("  Bajo peso: %.1f%% (diferencia: %+.1f%%)\n", 
+            secundaria$bajo_peso * 100,
+            (secundaria$bajo_peso - primaria$bajo_peso) * 100))
+cat(sprintf("  Normal: %.1f%% (diferencia: %+.1f%%)\n",
+            secundaria$normal * 100,
+            (secundaria$normal - primaria$normal) * 100))
+cat(sprintf("  Sobrepeso: %.1f%% (diferencia: %+.1f%%)\n",
+            secundaria$sobrepeso * 100,
+            (secundaria$sobrepeso - primaria$sobrepeso) * 100))
+
+cat("\nSuperior vs Primaria:\n")
+cat(sprintf("  Bajo peso: %.1f%% (diferencia: %+.1f%%)\n",
+            superior$bajo_peso * 100,
+            (superior$bajo_peso - primaria$bajo_peso) * 100))
+cat(sprintf("  Normal: %.1f%% (diferencia: %+.1f%%)\n",
+            superior$normal * 100,
+            (superior$normal - primaria$normal) * 100))
+cat(sprintf("  Sobrepeso: %.1f%% (diferencia: %+.1f%%)\n",
+            superior$sobrepeso * 100,
+            (superior$sobrepeso - primaria$sobrepeso) * 100))
+```
+
+**Resultados:**
+- **Primaria:** 20.9% bajo peso, 64.6% normal, 14.5% sobrepeso
+- **Secundaria:** 17.4% bajo peso (-3.5%), 67.9% normal (+3.3%), 14.7% sobrepeso (+0.2%)
+- **Superior:** 27.0% bajo peso (+6.1%), 69.1% normal (+4.5%), 3.9% sobrepeso (-10.6%)
+
+**Interpretación:**
+1. **Educación secundaria** reduce el bajo peso y mantiene equilibrio nutricional.
+2. **Educación superior** muestra efecto dual: 
+   - Fuerte protección contra sobrepeso (-10.6%)
+   - Aumento paradójico del bajo peso (+6.1%)
+3. **Primaria** presenta mayor riesgo de sobrepeso con bajo peso moderado.
+
+**Conclusión:** La educación materna influye diferencialmente: secundaria optimiza resultados generales, mientras superior previene sobrepeso pero puede aumentar riesgo de déficit nutricional.
 
 ## **7. Evaluación del Ajuste y Capacidad Predictiva**
 
@@ -618,51 +930,167 @@ Se traduce la estadística compleja a gráficos intuitivos que facilitan la inte
 * **Resultados a incluir:**
   - **Pseudo R²:** Reportar McFadden, Cox-Snell y Nagelkerke.
   - "El Pseudo R² de McFadden (0.08) indica un ajuste moderado, típico en modelos de ciencias sociales/salud"
-  - **Test de razón de verosimilitud:** χ²=50.67, gl=22, p<0.001 (ya calculado)
+  - **Test de razón de verosimilitud:** χ²=50.67, gl=22, p<0.001 (ya calculado)  
+  
+```{r}
+# --- SECCIÓN 7.1: BONDAD DE AJUSTE GLOBAL ---
+
+# 1. Calcular Pseudo R² de McFadden
+# Fórmula: 1 - (log-verosimilitud del modelo / log-verosimilitud del modelo nulo)
+logLik_modelo <- as.numeric(logLik(modelo_corregido))
+logLik_nulo <- as.numeric(logLik(multinom(estado_nutricional ~ 1, data = datos)))
+
+pseudo_r2_mcfadden <- 1 - (logLik_modelo / logLik_nulo)
+
+# 2. Calcular Pseudo R² de Cox-Snell
+# Fórmula: 1 - exp((2/n) * (logLik_nulo - logLik_modelo))
+n <- nrow(datos)
+pseudo_r2_coxsnell <- 1 - exp((2/n) * (logLik_nulo - logLik_modelo))
+
+# 3. Calcular Pseudo R² de Nagelkerke (ajuste de Cox-Snell)
+# Fórmula: Cox-Snell / (1 - exp((2/n) * logLik_nulo))
+max_r2 <- 1 - exp((2/n) * logLik_nulo)
+pseudo_r2_nagelkerke <- pseudo_r2_coxsnell / max_r2
+
+# 4. Mostrar resultados
+cat("\n=== 7.1. BONDAD DE AJUSTE GLOBAL ===\n")
+cat("=====================================\n\n")
+cat("Medidas de ajuste del modelo:\n")
+cat("----------------------------------------\n")
+cat(sprintf("Pseudo R² de McFadden:   %.4f\n", pseudo_r2_mcfadden))
+cat(sprintf("Pseudo R² de Cox-Snell:   %.4f\n", pseudo_r2_coxsnell))
+cat(sprintf("Pseudo R² de Nagelkerke:  %.4f\n", pseudo_r2_nagelkerke))
+cat(sprintf("Devianza del modelo:      %.2f\n", deviance(modelo_corregido)))
+cat(sprintf("AIC:                      %.2f\n", AIC(modelo_corregido)))
+cat(sprintf("Número de observaciones:  %d\n", n))
+
+# 6. Prueba de razón de verosimilitud (ya la tenemos, pero la mostramos)
+cat("\nPrueba de razón de verosimilitud (Modelo vs. Nulo):\n")
+cat("---------------------------------------------------\n")
+cat("Estadístico LR: ", round(2*(logLik_modelo - logLik_nulo), 3), "\n")
+cat("Grados de libertad: ", length(coef(modelo_corregido)), "\n")
+cat("Valor-p: ", pchisq(2*(logLik_modelo - logLik_nulo), df = length(coef(modelo_corregido)), lower.tail = FALSE), "\n")
+```  
+**Interpretación:**
+El Pseudo R² de McFadden (0.054) indica un ajuste modesto, típico en modelos de ciencias sociales/salud donde múltiples factores no medidos influyen en el fenómeno. Aunque bajo, está dentro del rango aceptable para modelos categóricos.
+
+La prueba de razón de verosimilitud (p < 0.01) confirma que el conjunto de variables predictoras contribuye significativamente a explicar el estado nutricional.
 
 ### **7.2. Capacidad Predictiva y Validación**
 * **Resultados a incluir:**
-  - **Tabla 2:** Matriz de confusión con clasificación real vs. predicha.
-  - **Métricas de rendimiento:**
-    - Exactitud global (Accuracy): XX%
-    - Sensibilidad por clase: Bajo peso (XX%), Normal (XX%), Sobrepeso (XX%)
-    - Especificidad por clase
-    - Estadístico Kappa de Cohen (acuerdo más allá del azar)
-  - **Validación cruzada:** Resultados de validación con k-fold (ej. 10-fold) para estimar el error de generalización.
+  - **Tabla 2:** Matriz de confusión con clasificación real vs. predicha.  
+  
+```{r}
+# --- SECCIÓN 7.2: EVALUACIÓN PREDICTIVA ---
+library(caret)
 
-## **8. Discusión, Conclusiones y Aplicaciones**
+# 1. Predecir categorías con el modelo
+predicciones <- predict(modelo_corregido, newdata = datos, type = "class")
+
+# 2. Crear matriz de confusión
+matriz_confusion <- confusionMatrix(data = predicciones, 
+                                    reference = datos$estado_nutricional)
+
+# 3. Mostrar resultados
+cat("\n=== 7.2. MATRIZ DE CONFUSIÓN Y CAPACIDAD PREDICTIVA ===\n")
+cat("========================================================\n\n")
+
+# Matriz de confusión
+cat("MATRIZ DE CONFUSIÓN:\n")
+print(matriz_confusion$table)
+
+# Métricas generales
+cat("\nMÉTRICAS DE PRECISIÓN:\n")
+cat("-----------------------\n")
+cat(sprintf("Exactitud global (Accuracy): %.2f%%\n", 
+            matriz_confusion$overall["Accuracy"] * 100))
+cat(sprintf("Intervalo de confianza 95%%: %.2f%% - %.2f%%\n",
+            matriz_confusion$overall["AccuracyLower"] * 100,
+            matriz_confusion$overall["AccuracyUpper"] * 100))
+cat(sprintf("Valor-p (Exactitud > No Information Rate): %.4f\n",
+            matriz_confusion$overall["AccuracyPValue"]))
+cat(sprintf("Tasa de error: %.2f%%\n", (1 - matriz_confusion$overall["Accuracy"]) * 100))
+
+# Métricas por clase
+cat("\nMÉTRICAS POR CLASE:\n")
+cat("-------------------\n")
+for(clase in levels(datos$estado_nutricional)) {
+  cat(sprintf("\nCategoría: %s\n", clase))
+  cat(sprintf("  Sensibilidad: %.2f%%\n", 
+              matriz_confusion$byClass[paste0("Class: ", clase), "Sensitivity"] * 100))
+  cat(sprintf("  Especificidad: %.2f%%\n",
+              matriz_confusion$byClass[paste0("Class: ", clase), "Specificity"] * 100))
+  cat(sprintf("  Valor predictivo positivo: %.2f%%\n",
+              matriz_confusion$byClass[paste0("Class: ", clase), "Pos Pred Value"] * 100))
+  cat(sprintf("  Valor predictivo negativo: %.2f%%\n",
+              matriz_confusion$byClass[paste0("Class: ", clase), "Neg Pred Value"] * 100))
+}
+
+# Estadístico Kappa
+cat("\nACUERDO MÁS ALLÁ DEL AZAR:\n")
+cat("---------------------------\n")
+cat(sprintf("Estadístico Kappa de Cohen: %.3f\n", 
+            matriz_confusion$overall["Kappa"]))
+cat(sprintf("Interpretación: %s\n",
+            case_when(
+              matriz_confusion$overall["Kappa"] < 0.2 ~ "Acuerdo insignificante",
+              matriz_confusion$overall["Kappa"] < 0.4 ~ "Acuerdo bajo",
+              matriz_confusion$overall["Kappa"] < 0.6 ~ "Acuerdo moderado",
+              matriz_confusion$overall["Kappa"] < 0.8 ~ "Acuerdo sustancial",
+              TRUE ~ "Acuerdo casi perfecto"
+            )))
+
+# Comparación con tasa base (No Information Rate)
+cat("\nCOMPARACIÓN CON TASA BASE (NO INFORMATION RATE):\n")
+cat("-------------------------------------------------\n")
+cat(sprintf("Tasa base (categoría más frecuente): %.2f%%\n",
+            matriz_confusion$overall["AccuracyNull"] * 100))
+cat(sprintf("Mejora relativa del modelo: %.1f%%\n",
+            ((matriz_confusion$overall["Accuracy"] - matriz_confusion$overall["AccuracyNull"]) /
+               (1 - matriz_confusion$overall["AccuracyNull"]) * 100)))
+```  
+
+**Resultados clave:**
+- Exactitud global: 61.2% (mejora 7.6% sobre tasa base del 58%)
+- Kappa: 0.155 (acuerdo insignificante)
+- Sesgo marcado hacia categoría "normal" (91.7% sensibilidad)
+- Falla en detectar sobrepeso (0% sensibilidad)
+- Bajo peso: 26.7% sensibilidad, 91.4% especificidad
+
+**Interpretación:**
+El modelo muestra capacidad predictiva limitada, con rendimiento apenas superior a predecir siempre la categoría mayoritaria. Presenta sesgo hacia "normal" y no logra identificar casos de sobrepeso. Su utilidad principal es inferencial (identificar factores asociados) más que clasificatoria.
+
+
+## **8. Conclusiones y Discusión**
 
 ### **8.1. Síntesis de Hallazgos Principales**
-* Resumen en 3-4 puntos clave:
-  1. "Se confirma la doble carga de malnutrición: 30% bajo peso y 12% sobrepeso"
-  2. "La zona rural y menor ingreso son factores de riesgo consistentes para bajo peso"
-  3. "El peso al nacer emerge como predictor importante de sobrepeso"
+1. **Doble carga nutricional:** 30% bajo peso, 12% sobrepeso.
+2. **Factores clave:** Zona urbana (OR=2.03), educación superior materna (reduce 79% sobrepeso), edad materna (efecto protector).
+3. **Modelo válido:** Supuestos cumplidos, ajuste significativo (p<0.001) pero predictividad limitada (61% exactitud).
 
-### **8.2. Discusión en Contexto Teórico y Práctico**
-* Comparación con literatura previa
-* Explicación de hallazgos inesperados (ej. educación materna)
-* Mecanismos potenciales que explican las asociaciones encontradas
+### **8.2. Implicaciones para Políticas Públicas**
+- **Zonas rurales:** Intervenciones contra déficit nutricional.
+- **Zonas urbanas:** Prevención temprana de sobrepeso.
+- **Educación materna:** Fortalecer secundaria, apoyo a madres con educación superior.
 
-### **8.3. Limitaciones del Estudio**
-* Datos simulados (si aplica) y limitaciones de validez externa
-* Variables no medidas (ej. seguridad alimentaria, calidad de dieta)
-* Posible causalidad reversa en algunas asociaciones
+### **8.3. Limitaciones**
+- Datos simulados.
+- Variables no medidas (ej. hábitos alimentarios).
+- Desbalance de clases afecta predicción.
 
-### **8.4. Implicancias para Políticas Públicas**
-* Recomendaciones específicas y accionables:
-  - "Priorizar intervenciones nutricionales en zonas rurales con enfoque en ingresos"
-  - "Programas de seguimiento para niños con alto peso al nacer"
-  - "Estrategias diferenciadas según nivel educativo materno"
+### **8.4. Recomendaciones Futuras**
+- Estudios longitudinales.
+- Incluir variables cualitativas.
+- Validación con datos reales.
 
-### **8.5. Caso Práctico: Predicción para Perfiles Específicos**
-* Ejemplo 1: "Niño rural, ingreso bajo, madre con educación primaria"
-  - Probabilidades predichas: Bajo peso (65%), Normal (30%), Sobrepeso (5%)
-* Ejemplo 2: "Niño urbano, ingreso alto, madre con educación superior"
-  - Probabilidades predichas: Bajo peso (10%), Normal (85%), Sobrepeso (5%)
+## **Conclusión Final**
 
-### **8.6. Recomendaciones para Investigación Futura**
-* Sugerencias metodológicas: estudios longitudinales, inclusión de variables adicionales
-* Sugerencias sustantivas: análisis por subgrupos, estudios cualitativos complementarios
+El análisis de regresión logística multinomial identificó factores significativos asociados al estado nutricional infantil. Se confirmó la **doble carga de malnutrición** (30% bajo peso, 12% sobrepeso) y se validó el modelo mediante pruebas de supuestos (Brant, VIF, IIA, linealidad).
+
+Los principales determinantes fueron: **zona urbana** (mayor probabilidad de peso normal), **educación superior materna** (fuerte protección contra sobrepeso) y **edad materna** (efecto protector). Aunque el modelo presenta capacidad predictiva limitada (61% exactitud), su valor radica en la identificación de patrones y factores de riesgo para informar intervenciones focalizadas.
+
+El estudio proporciona evidencia para diseñar **políticas diferenciadas**: combate al déficit nutricional en zonas rurales y prevención del sobrepeso en áreas urbanas, con especial atención al nivel educativo materno como factor modulador clave.
+
 
 
 
